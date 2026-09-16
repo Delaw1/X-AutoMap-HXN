@@ -46,7 +46,11 @@ from automap_hxn.utils import (
 from .blobs.processing import find_union_blobs
 
 from .json_maker import JSONMakerWidget
+from .ai_json_maker import AIJSONMakerWidget
 from .coarse_scan_widget import CoarseScanWidget
+from .particle_query_widget import ParticleQueryWidget
+from .llm_vision_widget import LLMVisionWidget
+from .spectral_analysis_widget import SpectralAnalysisWidget
 
 
 class ZoomableGraphicsView(QGraphicsView):
@@ -232,15 +236,45 @@ class MainWindow(QWidget):
         self.outer_layout.addWidget(self.setup_widget)
         self.tab_widget.addTab(self.automap_tab, "AutoMap")
 
+        # self.particle_query_tab = self._create_particle_query_tab()
+        # self.tab_widget.addTab(self.particle_query_tab, "Particle Query (DB)")
+
+        # self.ai_json_maker_tab = self._create_ai_json_maker_tab()
+        # self.tab_widget.addTab(self.ai_json_maker_tab, "AI JSON Maker")
+
         self.json_maker_tab = self._create_json_maker_tab()
         self.tab_widget.addTab(self.json_maker_tab, "JSON Maker")
 
         self.coarse_scan_tab = CoarseScanWidget()
         self.tab_widget.addTab(self.coarse_scan_tab, "Mosaic Scan")
 
+        self.llm_vision_tab = self._create_llm_vision_tab()
+        self.tab_widget.addTab(self.llm_vision_tab, "LLM Vision")
+
+        self.spectral_analysis_tab = self._create_spectral_analysis_tab()
+        self.tab_widget.addTab(self.spectral_analysis_tab, "Fe-Dy Spectral Analysis")
+
+    def _create_particle_query_tab(self):
+        widget = ParticleQueryWidget()
+        # Connect signal to highlight particles in main view
+        widget.particles_selected.connect(self._on_particles_selected_from_query)
+        return widget
+
+    def _create_llm_vision_tab(self):
+        widget = LLMVisionWidget()
+        # Connect signal to send coordinates to queue
+        widget.particles_selected.connect(self._on_vision_particles_selected)
+        return widget
+
+    def _create_ai_json_maker_tab(self):
+        return AIJSONMakerWidget()
 
     def _create_json_maker_tab(self):
         return JSONMakerWidget()
+
+    def _create_spectral_analysis_tab(self):
+        """Create the Fe-Dy Spectral Analysis tab."""
+        return SpectralAnalysisWidget(self.app_state)
 
     def _create_setup_screen(self):
         widget = QWidget()
@@ -1584,6 +1618,9 @@ f"Length: {ub['length']} px<br>"
         
         self.update_boxes()
 
+        # Update particle query tab with new union results
+        self._update_particle_query_data()
+
     def send_to_list(self):
         existing_texts = {self.queue_server_list.item(i).text() for i in range(self.queue_server_list.count())}
         for item in self.union_list_widget.selectedItems():
@@ -1722,6 +1759,123 @@ f"Length: {ub['length']} px<br>"
 
     def clear_queue_server_list(self):
         self.queue_server_list.clear()
+
+    def _update_particle_query_data(self):
+        """Update particle query tab with current detection results."""
+        if not hasattr(self, 'particle_query_tab'):
+            return
+
+        if not self.app_state.precomputed_blobs:
+            return
+
+        # Get image shape
+        if not self.app_state.loaded_images:
+            return
+
+        first_img = next(iter(self.app_state.loaded_images.values()))
+        image_shape = first_img.shape
+
+        # Organize blobs by color
+        blobs_by_color = {}
+        for color in self.app_state.element_colors:
+            color_blobs = []
+            if color in self.app_state.precomputed_blobs:
+                for blobs_list in self.app_state.precomputed_blobs[color].values():
+                    color_blobs.extend(blobs_list)
+            blobs_by_color[color] = color_blobs
+
+        # Get element mapping
+        element_mapping = {}
+        for element, color in zip(self.app_state.loaded_filenames, self.app_state.element_colors):
+            # Extract element from filename (e.g., "Ca_K.tif" -> "Ca")
+            element_name = element.split('_')[0] if '_' in element else element.split('.')[0]
+            element_mapping[element_name] = color
+
+        # Load into query tab
+        try:
+            self.particle_query_tab.load_particle_data(
+                blobs_by_color=blobs_by_color,
+                union_blobs=self.graphics_view.union_dict if hasattr(self.graphics_view, 'union_dict') else {},
+                image_shape=image_shape,
+                element_mapping=element_mapping
+            )
+        except Exception as e:
+            print(f"Failed to update particle query tab: {e}")
+
+    def _on_vision_particles_selected(self, scan_coords):
+        """Handle particles selected from LLM vision tab - add to queue."""
+        # Add scan coordinates to the queue list
+        for coord in scan_coords:
+            x_um = coord['x_center_um']
+            y_um = coord['y_center_um']
+            desc = coord.get('description', 'LLM vision particle')
+            conf = coord.get('confidence', 1.0)
+
+            item_text = f"Vision: ({x_um:.2f}, {y_um:.2f}) µm | conf={conf:.2f} | {desc}"
+            item = QListWidgetItem(item_text)
+            item.setData(Qt.UserRole, coord)
+            self.queue_server_list.addItem(item)
+
+        QMessageBox.information(
+            self, "Added to Queue",
+            f"Added {len(scan_coords)} particles to scan queue.\n\n"
+            "Go to AutoMap tab to review and submit the queue."
+        )
+
+    def _on_particles_selected_from_query(self, particles):
+        """Handle particles selected from query tab - highlight them in main view."""
+        if not self.graphics_view:
+            return
+
+        # Switch to AutoMap tab to show highlights
+        self.tab_widget.setCurrentWidget(self.automap_tab)
+
+        # Clear existing highlights
+        for item in self.graphics_view.highlight_items:
+            self.graphics_view.scene().removeItem(item)
+        self.graphics_view.highlight_items.clear()
+
+        # Highlight query results
+        for particle in particles:
+            center = particle['center_px']
+
+            if particle['type'] == 'individual':
+                # Highlight individual particle
+                radius = particle.get('radius_px', 15)
+                circle = QGraphicsEllipseItem(
+                    center[0] - radius - 5,
+                    center[1] - radius - 5,
+                    (radius + 5) * 2,
+                    (radius + 5) * 2
+                )
+                circle.setPen(QPen(QColor("yellow"), 3, Qt.SolidLine))
+                circle.setZValue(100)
+                self.graphics_view.scene().addItem(circle)
+                self.graphics_view.highlight_items.append(circle)
+            else:
+                # Highlight union particle
+                size = particle.get('size_px', 50)
+                rect = self.graphics_view.scene().addRect(
+                    center[0] - size/2,
+                    center[1] - size/2,
+                    size, size,
+                    QPen(QColor("yellow"), 3, Qt.SolidLine)
+                )
+                rect.setZValue(100)
+                self.graphics_view.highlight_items.append(rect)
+
+        # Center view on first particle if any
+        if particles:
+            first = particles[0]
+            center = first['center_px']
+            self.graphics_view.centerOn(center[0], center[1])
+
+        QMessageBox.information(
+            self,
+            "Particles Highlighted",
+            f"Highlighted {len(particles)} particles in the image.\n"
+            "Yellow outlines show the selected particles."
+        )
 
 class UpdateProgressEvent(QEvent):
     EVENT_TYPE = QEvent.Type(QEvent.User + 1)

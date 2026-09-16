@@ -73,13 +73,45 @@ not a command-line launcher: its execution call is commented out. Use
 are appropriate. A dedicated, safe simulation command is planned but is not
 yet provided.
 
-## GUI Workflow
+## Complete Workflow: PyXRF → AutoMap
+
+### Step 1: Fit XRF Data with PyXRF (Recommended)
+
+For best results, start with raw XRF spectroscopy data:
+
+1. **Fit data**: Use [PyXRF](https://nsls-ii.github.io/PyXRF/) to fit raw HDF5 XRF spectra
+2. **Export maps**: Export fitted element maps as TIFF files
+3. **Load into AutoMap**: Continue with AutoMap workflow below
+
+See [docs/PYXRF_TO_AUTOMAP_WORKFLOW.md](docs/PYXRF_TO_AUTOMAP_WORKFLOW.md) for detailed integration guide.
+
+**Why use PyXRF first?**
+- Accurate element quantification through peak fitting
+- Background subtraction and spectral deconvolution
+- Better signal-to-noise for ROI detection
+- Handles overlapping emission lines
+
+### Step 2: AutoMap GUI Workflow
 
 1. **Load images**: Select a directory with XRF element TIFFs, pick 3 elements (mapped to RGB)
 2. **Configure**: Set microns-per-pixel scale and stage origin coordinates
 3. **Detect**: Adjust intensity/area thresholds to identify particles
 4. **Find unions**: Locate regions where multiple elements overlap
 5. **Queue scans**: Send selected regions to the beamline queue server
+
+## AI JSON Maker
+
+NEW: Generate configuration files using natural language! The **AI JSON Maker** tab lets you describe your scan in plain English:
+
+```
+"Create a cellpose scan with 0.25 µm steps, detecting calcium and iron"
+```
+
+Claude will generate the complete JSON configuration. See [docs/AI_JSON_MAKER.md](docs/AI_JSON_MAKER.md) for details.
+
+**Requirements**: 
+- Set `ANTHROPIC_API_KEY` environment variable
+- Run `pixi install` to get the `anthropic` package
 
 ## Detection Methods
 

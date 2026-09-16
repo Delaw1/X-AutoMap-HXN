@@ -26,3 +26,5 @@ torchvision = "0.22.*"
 [pypi-dependencies]
 automap_hxn = { path = ".", editable = true }
 ultralytics = ">=8.4,<9"
+anthropic = ">=0.42.0,<1"
+openai = ">=1.0.0"

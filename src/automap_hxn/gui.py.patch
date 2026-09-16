@@ -1,0 +1,98 @@
+--- Add these methods to MainWindow class ---
+
+    def _update_particle_query_data(self):
+        """Update particle query tab with current detection results."""
+        if not hasattr(self, 'particle_query_tab'):
+            return
+
+        if not self.app_state.precomputed_blobs:
+            return
+
+        # Get image shape
+        if not self.app_state.loaded_images:
+            return
+
+        first_img = next(iter(self.app_state.loaded_images.values()))
+        image_shape = first_img.shape
+
+        # Organize blobs by color
+        blobs_by_color = {}
+        for color in self.app_state.element_colors:
+            color_blobs = []
+            if color in self.app_state.precomputed_blobs:
+                for blobs_list in self.app_state.precomputed_blobs[color].values():
+                    color_blobs.extend(blobs_list)
+            blobs_by_color[color] = color_blobs
+
+        # Get element mapping
+        element_mapping = {}
+        for element, color in zip(self.app_state.loaded_filenames, self.app_state.element_colors):
+            # Extract element from filename (e.g., "Ca_K.tif" -> "Ca")
+            element_name = element.split('_')[0] if '_' in element else element.split('.')[0]
+            element_mapping[element_name] = color
+
+        # Load into query tab
+        try:
+            self.particle_query_tab.load_particle_data(
+                blobs_by_color=blobs_by_color,
+                union_blobs=self.graphics_view.union_dict if hasattr(self.graphics_view, 'union_dict') else {},
+                image_shape=image_shape,
+                element_mapping=element_mapping
+            )
+        except Exception as e:
+            print(f"Failed to update particle query tab: {e}")
+
+    def _on_particles_selected_from_query(self, particles):
+        """Handle particles selected from query tab - highlight them in main view."""
+        if not self.graphics_view:
+            return
+
+        # Switch to AutoMap tab to show highlights
+        self.tab_widget.setCurrentWidget(self.automap_tab)
+
+        # Clear existing highlights
+        for item in self.graphics_view.highlight_items:
+            self.graphics_view.scene().removeItem(item)
+        self.graphics_view.highlight_items.clear()
+
+        # Highlight query results
+        for particle in particles:
+            center = particle['center_px']
+
+            if particle['type'] == 'individual':
+                # Highlight individual particle
+                radius = particle.get('radius_px', 15)
+                circle = QGraphicsEllipseItem(
+                    center[0] - radius - 5,
+                    center[1] - radius - 5,
+                    (radius + 5) * 2,
+                    (radius + 5) * 2
+                )
+                circle.setPen(QPen(QColor("yellow"), 3, Qt.SolidLine))
+                circle.setZValue(100)
+                self.graphics_view.scene().addItem(circle)
+                self.graphics_view.highlight_items.append(circle)
+            else:
+                # Highlight union particle
+                size = particle.get('size_px', 50)
+                rect = self.graphics_view.scene().addRect(
+                    center[0] - size/2,
+                    center[1] - size/2,
+                    size, size,
+                    QPen(QColor("yellow"), 3, Qt.SolidLine)
+                )
+                rect.setZValue(100)
+                self.graphics_view.highlight_items.append(rect)
+
+        # Center view on first particle if any
+        if particles:
+            first = particles[0]
+            center = first['center_px']
+            self.graphics_view.centerOn(center[0], center[1])
+
+        QMessageBox.information(
+            self,
+            "Particles Highlighted",
+            f"Highlighted {len(particles)} particles in the image.\n"
+            "Yellow outlines show the selected particles."
+        )
